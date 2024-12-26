@@ -1,0 +1,35 @@
+
+{% set deployment_name = env['deployment'] %}
+resources:
+  - name: {{ deployment_name }}-{{ properties['name'] }}
+    type: compute.v1.instanceTemplate
+    properties:
+      properties:
+        machineType: {{ properties["machineType"] }}
+        networkInterfaces:
+          - network: $(ref.{{ deployment_name }}-{{ properties["vpcName"] }}-aq.selfLink)
+            subnetwork: $(ref.{{ deployment_name }}-{{ properties["subnetName"] }}.selfLink)
+            accessConfigs:
+              - name: External NAT
+                type: ONE_TO_ONE_NAT
+        serviceAccounts:
+          - email: $(ref.{{ deployment_name }}-{{ properties["serviceAccountName"] }}.email)
+            scopes:
+              - https://www.googleapis.com/auth/cloud-platform
+        disks:
+          - boot: true
+            autoDelete: true
+            initializeParams:
+              diskType: {{ properties["diskType"] }}
+              diskSizeGb: {{ properties["diskSizeGb"] }}
+              sourceImage: {{ properties["sourceImage"] }}
+        metadata:
+          items:
+            - key: sql-instance-name
+              value: $(ref.{{ deployment_name }}-{{ properties["cloudsqlInstanceName"] }}.name)
+            - key: startup-script
+              value: |
+                {{ properties["startupScript"] | indent(16) }}
+    metadata:
+      dependsOn:
+        - {{ deployment_name }}-{{ properties["healthCheckName"] }} 

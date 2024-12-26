@@ -1,0 +1,14 @@
+
+{% set deployment_name = env['deployment'] %}
+resources:
+  - name: {{ deployment_name }}-{{ properties["healthCheckName"] }}
+    type: compute.v1.healthCheck
+    properties:
+      checkIntervalSec: {{ properties["checkIntervalSec"] }}
+      timeoutSec: {{ properties["timeoutSec"] }}
+      unhealthyThreshold: {{ properties["unhealthyThreshold"] }}
+      healthyThreshold: {{ properties["healthyThreshold"] }}
+      type: HTTP
+      httpHealthCheck:
+        port: {{ properties["httpPort"] }}
+        requestPath: {{ properties["requestPath"] }}

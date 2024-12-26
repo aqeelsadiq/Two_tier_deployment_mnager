@@ -1,0 +1,22 @@
+{% set deployment_name = env['deployment'] %}
+resources:
+  - name: {{ deployment_name }}-{{ properties["cloudsqlInstanceName"] }}
+    type: gcp-types/sqladmin-v1beta4:instances
+    properties:
+      region: {{ properties["region"] }}
+      settings:
+        tier: {{ properties["tier"] }}
+        databaseVersion: {{ properties["databaseVersion"] }}
+        ipConfiguration:
+          ipv4Enabled: false
+          privateNetwork: $(ref.{{ deployment_name }}-{{ properties["vpcName"] }}-aq.selfLink)
+      rootPassword: {{ properties["rootPassword"] }}
+
+  - name: {{ properties["cloudsqlDbName"] }}
+    type: gcp-types/sqladmin-v1beta4:databases
+    properties:
+      instance: $(ref.{{ deployment_name }}-{{ properties["cloudsqlInstanceName"] }}.name)
+      name: {{ properties["dbname"] }}
+    metadata:
+      dependsOn:
+        - {{ deployment_name }}-{{ properties["cloudsqlInstanceName"] }}

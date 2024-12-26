@@ -1,0 +1,66 @@
+    metadata:
+      dependsOn:
+        - {{ properties["healthCheckName"] }} 
+
+
+        serviceAccounts:
+          - email: $(ref.{{ properties['env'] }}-{{ properties["serviceAccountName"] }}.email)
+            scopes:
+              - https://www.googleapis.com/auth/cloud-platform
+
+
+                      SQL_PRIVATE_IP=$(gcloud sql instances list --project="eurus-project-dev" --filter="ipAddresses.type:PRIVATE" --format="value(ipAddresses[0].ipAddress)" | head -n 1)
+
+
+
+
+{% set deployment_name = env['deployment'] %}
+{% set env_name = deployment_name.split('-')[0] %}  # Extract environment from deployment name
+resources:
+  - name: "{{ env_name }}-{{ properties['name'] }}-aq"
+    type: compute.v1.network
+    properties:
+      autoCreateSubnetworks: false
+
+{% for subnet in properties["subnets"] %}
+  - name: "{{ env_name }}-{{ subnet['name'] }}"
+    type: compute.v1.subnetwork
+    properties:
+      network: $(ref.{{ env_name }}-{{ properties['name'] }}-aq.selfLink)
+      ipCidrRange: {{ subnet["ipCidrRange"] }}
+      region: {{ subnet["region"] }}
+{% endfor %}
+
+
+gcloud deployment-manager deployments create dev-mydeployment --config config.yml
+
+
+
+Steps
+Enable Required APIs: Ensure the following APIs are enabled for your project:
+
+compute.googleapis.com (for VPC and networking)
+sqladmin.googleapis.com (for Cloud SQL)
+servicenetworking.googleapis.com (for private service access)
+
+
+
+gcloud compute addresses create my-private-ip-range   --global   --purpose VPC_PEERING   --prefix-length 16   --network aqeelvpc
+
+gcloud services vpc-peerings connect \
+  --service=servicenetworking.googleapis.com \
+  --network=aqeelvpc \
+  --ranges=my-private-ip-range \
+  --project=your-project-id
+gcloud compute networks peerings list --network=aqeelvpc
+
+
+
+
+
+
+
+modules
+instancetemplate
+main.tf
+script.sh

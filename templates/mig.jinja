@@ -1,0 +1,32 @@
+{% set deployment_name = env['deployment'] %}
+resources:
+  - name: {{ deployment_name }}-{{ properties['migName'] }}
+    type: compute.v1.instanceGroupManager
+    properties:
+      baseInstanceName: {{ deployment_name }}-{{ properties["baseInstanceName"] }}
+      instanceTemplate: $(ref.{{ deployment_name }}-{{ properties["instanceTemplateName"] }}.selfLink)
+      targetSize: {{ properties["targetSize"] }}
+      autoHealingPolicies:
+        - healthCheck: $(ref.{{ deployment_name }}-{{ properties["healthCheckName"] }}.selfLink)
+      zone: {{ properties["zone"] }}
+      namedPorts:
+        - name: {{ properties["namedPortName"] }}
+          port: {{ properties["namedPort"] }}
+    metadata:      
+      dependsOn:
+        - {{ deployment_name }}-{{ properties["instanceTemplateName"] }}
+        - {{ deployment_name }}-{{ properties["healthCheckName"] }}
+
+  - name: {{ deployment_name }}-{{ properties['autoscalerName'] }}
+    type: compute.v1.autoscaler
+    properties:
+      zone: {{ properties["zone"] }}
+      target: $(ref.{{ deployment_name }}-{{ properties['migName'] }}.selfLink)
+      autoscalingPolicy:
+        minNumReplicas: {{ properties["minNumReplicas"] }}
+        maxNumReplicas: {{ properties["maxNumReplicas"] }}
+        cpuUtilization:
+          utilizationTarget: {{ properties["cpuUtilization"] }}
+    metadata:      
+      dependsOn:
+        - {{ deployment_name }}-{{ properties['migName'] }}

@@ -1,0 +1,276 @@
+
+# create CloudSQL, MIG, Loadbalancer, VPC, Subnets, Firewalls
+
+
+resources:
+#############################
+# Create the VPC
+################################
+  - name: aqeelvpc
+    type: compute.v1.network
+    properties:
+      autoCreateSubnetworks: false
+
+
+  - name: publicsubnet1-aqeel
+    type: compute.v1.subnetwork
+    properties:
+      region: us-south1
+      network: $(ref.aqeelvpc.selfLink)
+      ipCidrRange: 10.0.1.0/24
+      privateIpGoogleAccess: false
+
+  - name: privatesubnet1-aqeel
+    type: compute.v1.subnetwork
+    properties:
+      region: us-south1
+      network: $(ref.aqeelvpc.selfLink)
+      ipCidrRange: 10.0.2.0/24
+      privateIpGoogleAccess: true
+
+
+
+###################################
+# Cloud SQL Instance
+####################################
+  - name: cloudsql-aqeel
+    type: gcp-types/sqladmin-v1beta4:instances
+    properties:
+      region: us-south1
+      settings:
+        tier: db-f1-micro
+        databaseVersion: MYSQL_8_0
+        ipConfiguration:
+          ipv4Enabled: false
+          privateNetwork: $(ref.aqeelvpc.selfLink)
+      rootPassword: "aqeel123"
+
+  - name: cloudsql-aqeel-dbname
+    type: gcp-types/sqladmin-v1beta4:databases
+    properties:
+      instance: $(ref.cloudsql-aqeel.name)
+      name: wordpress
+    metadata:
+      dependsOn:
+        - cloudsql-aqeel
+
+
+##############################
+# Service Account
+################################
+  - name: wordpress-sa
+    type: iam.v1.serviceAccount
+    properties:
+      accountId: wordpress-service-sa
+      displayName: "WordPress Service Account"
+      projectId: eurus-project-dev
+
+  - name: wordpress-binding
+    type: gcp-types/cloudresourcemanager-v1:virtual.projects.iamMemberBinding
+    properties:
+      resource: $(ref.wordpress-sa.projectId)
+      role: roles/cloudsql.client
+      member: serviceAccount:$(ref.wordpress-sa.email)
+    metadata:
+      dependsOn:
+        - wordpress-sa
+
+
+#############################
+# Instance Template
+############################
+  - name: instancetemp-aqeel
+    type: compute.v1.instanceTemplate
+    properties:
+      properties:
+        machineType: e2-medium
+        networkInterfaces:
+          - network: $(ref.aqeelvpc.selfLink)
+            subnetwork: $(ref.publicsubnet1-aqeel.selfLink)
+            accessConfigs:
+              - name: External NAT
+                type: ONE_TO_ONE_NAT
+        serviceAccounts:
+          - email: $(ref.wordpress-sa.email)
+            scopes:
+              - https://www.googleapis.com/auth/cloud-platform
+        disks:
+          - boot: true
+            autoDelete: true
+            initializeParams:
+              diskType: pd-balanced
+              diskSizeGb: 10
+              sourceImage: projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts
+        metadata:
+          items:
+            - key: startup-script
+              value: |
+                #!/bin/bash
+                sudo apt update -y
+                sudo apt install apache2 -y
+                sudo systemctl enable apache2
+                sudo apt install php php-mysqli -y
+                sudo apt install mysql-client-core-8.0
+                sudo apt-get install wget unzip -y
+                sudo wget https://wordpress.org/latest.zip
+                sudo unzip latest.zip
+                sudo cp -r wordpress/* /var/www/html/
+                sudo chown -R www-data:www-data /var/www/html/
+                sudo chmod 777 /var/www/html/wp-config.php
+                sudo rm -rf /var/www/html/index.html
+                sudo cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php
+                PROJECT_ID="eurus-project-dev"
+                INSTANCE_NAME="cloudsql-aqeel"
+                SQL_PRIVATE_IP=$(gcloud sql instances describe $INSTANCE_NAME --project=$PROJECT_ID --format="value(ipAddresses[0].ipAddress)")
+                sudo sed -i "s/database_name_here/wordpress/g" /var/www/html/wp-config.php
+                sudo sed -i "s/username_here/root/g" /var/www/html/wp-config.php
+                sudo sed -i "s/password_here/aqeel123/g" /var/www/html/wp-config.php
+                sudo sed -i "s/localhost/${SQL_PRIVATE_IP}/g" /var/www/html/wp-config.php
+
+    metadata:
+      dependsOn:
+        - health-check-aqeel
+
+#############################
+# Mig and Load balancer
+#############################
+
+  - name: mig-aqeel
+    type: compute.v1.instanceGroupManager
+    properties:
+      baseInstanceName: wordpress-instance
+      instanceTemplate: $(ref.instancetemp-aqeel.selfLink)
+      targetSize: 2
+      autoHealingPolicies:
+        - healthCheck: $(ref.health-check-aqeel.selfLink)
+      zone: us-south1-a
+      namedPorts:
+        - name: http
+          port: 80
+    metadata:
+      dependsOn:
+        - cloudsql-aqeel
+        - instancetemp-aqeel
+        - health-check-aqeel
+
+
+  - name: autoscaler
+    type: compute.v1.autoscaler
+    properties:
+      zone: us-south1-a
+      target: $(ref.mig-aqeel.selfLink)
+      autoscalingPolicy:
+        minNumReplicas: 2
+        maxNumReplicas: 4
+        cpuUtilization:
+          utilizationTarget: 0.6
+
+  - name: health-check-aqeel
+    type: compute.v1.healthCheck 
+    properties:
+      checkIntervalSec: 10
+      timeoutSec: 10
+      unhealthyThreshold: 3
+      healthyThreshold: 2
+      type: HTTP
+      httpHealthCheck:
+        port: 80
+        requestPath: /wp-admin/install.php
+
+  - name: backend-service
+    type: compute.v1.backendService
+    properties:
+      loadBalancingScheme: EXTERNAL_MANAGED
+      protocol: HTTP
+      port: 80
+      portName: http
+      backends:
+        - group: $(ref.mig-aqeel.instanceGroup)
+          balancingMode: UTILIZATION
+          maxUtilization: 0.8
+      healthChecks:
+        - $(ref.health-check-aqeel.selfLink)
+      timeoutSec: 30
+      connectionDraining:
+        drainingTimeoutSec: 300
+    metadata:
+      dependsOn:
+        - health-check-aqeel
+        - mig-aqeel
+
+  - name: http-url-map
+    type: compute.v1.urlMap
+    properties:
+      defaultService: $(ref.backend-service.selfLink)
+    metadata:
+      dependsOn:
+        - backend-service
+
+  - name: http-target-proxy
+    type: compute.v1.targetHttpProxy
+    properties:
+      urlMap: $(ref.http-url-map.selfLink)
+    metadata:
+      dependsOn:
+        - http-url-map
+
+
+  - name: aqeel-lb
+    type: compute.v1.globalForwardingRule
+    properties:
+      loadBalancingScheme: EXTERNAL_MANAGED
+      portRange: "80"
+      target: $(ref.http-target-proxy.selfLink)
+
+    metadata:
+      dependsOn:
+        - http-target-proxy
+
+###################################
+# Firewalls
+###################################
+
+  - name: allow-http-https
+    type: compute.v1.firewall
+    properties:
+      network: $(ref.aqeelvpc.selfLink)
+      allowed:
+        - IPProtocol: TCP
+          ports: [80, 443, 22]
+      sourceRanges: ["0.0.0.0/0"]
+      direction: INGRESS
+    metadata:
+      dependsOn:
+        - mig-aqeel
+        - aqeelvpc
+
+
+  - name: allow-sql-access
+    type: compute.v1.firewall
+    properties:
+      network: $(ref.aqeelvpc.selfLink)
+      allowed:
+        - IPProtocol: TCP
+          ports: [3306]
+      sourceRanges: ["10.0.1.0/24", "10.0.2.0/24"]
+      direction: INGRESS
+
+
+  - name: allow-health-check
+    type: compute.v1.firewall
+    properties:
+      network: $(ref.aqeelvpc.selfLink)
+      allowed:
+        - IPProtocol: tcp
+          ports: [80]
+      sourceRanges: ["0.0.0.0/0"]
+
+
+  - name: allow-lb-and-health-check
+    type: compute.v1.firewall
+    properties:
+      network: $(ref.aqeelvpc.selfLink)
+      allowed:
+        - IPProtocol: tcp
+          ports: [80]
+      sourceRanges: ["0.0.0.0/0"]

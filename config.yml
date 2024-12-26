@@ -1,0 +1,189 @@
+imports:
+  - path: templates/vpc.jinja
+  - path: templates/firewall.jinja
+  - path: templates/health-check.jinja
+  - path: templates/load-balancer.jinja
+  - path: templates/instance-template.jinja
+  - path: templates/mig.jinja
+  - path: templates/backend-service.jinja
+  - path: templates/service-account.jinja
+  - path: templates/cloudsql.jinja
+
+
+#####################
+# vpc
+#####################
+resources:
+  - name: my-vpc
+    type: templates/vpc.jinja
+    properties:
+      name: vpc
+      subnets:
+        - name: pub-subnet-1
+          ipCidrRange: 10.0.1.0/24
+          region: us-south1
+          privateIpGoogleAccess: false
+
+        - name: pri-subnet-2
+          ipCidrRange: 10.0.2.0/24
+          region: us-south1
+          privateIpGoogleAccess: true
+
+
+#######################
+# Instancce Template
+######################
+  - name: "instancetemp"
+    type: templates/instance-template.jinja
+    properties:
+      name: instancetemp
+      machineType: e2-medium
+      vpcName: vpc
+      cloudsqlInstanceName: cloudsql-aqeel
+      subnetName: pub-subnet-1
+      serviceAccountName: "wordpress-service-sa"
+      healthCheckName: "health-check-aqeel"
+      diskType: pd-balanced
+      diskSizeGb: 10
+      sourceImage: projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts
+      startupScript: |
+        #!/bin/bash
+        sudo apt update -y
+        sudo apt install apache2 -y
+        sudo systemctl enable apache2
+        sudo apt install php php-mysqli -y
+        sudo apt install mysql-client-core-8.0 -y
+        sudo apt-get install wget unzip -y
+        sudo wget https://wordpress.org/latest.zip
+        sudo unzip latest.zip
+        sudo cp -r wordpress/* /var/www/html/
+        sudo chown -R www-data:www-data /var/www/html/
+        sudo chmod 777 /var/www/html/wp-config.php
+        sudo rm -rf /var/www/html/index.html
+        sudo cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php
+        PROJECT_ID="eurus-project-dev"
+        INSTANCE_NAME=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/sql-instance-name" -H "Metadata-Flavor: Google")
+        SQL_PRIVATE_IP=$(gcloud sql instances describe $INSTANCE_NAME --project=$PROJECT_ID --format="value(ipAddresses[0].ipAddress)")
+        sudo sed -i "s/database_name_here/wordpress/g" /var/www/html/wp-config.php
+        sudo sed -i "s/username_here/root/g" /var/www/html/wp-config.php
+        sudo sed -i "s/password_here/aqeel123/g" /var/www/html/wp-config.php
+        sudo sed -i "s/localhost/${SQL_PRIVATE_IP}/g" /var/www/html/wp-config.php
+
+#########################
+# Managed Instance Group
+#######################
+
+  - name: mig-aqeel
+    type: templates/mig.jinja
+    properties:
+      migName: mig-aqeel
+      baseInstanceName: wordpress-instance
+      instanceTemplateName: instancetemp
+      healthCheckName: health-check-aqeel
+      targetSize: 2
+      zone: us-south1-a
+      namedPortName: http
+      namedPort: 80
+      autoscalerName: autoscaler
+      minNumReplicas: 2
+      maxNumReplicas: 4
+      cpuUtilization: 0.6
+
+########################
+# Health Check
+#######################
+
+  - name: health-check-aqeel
+    type: templates/health-check.jinja
+    properties:
+      healthCheckName: health-check-aqeel
+      checkIntervalSec: 15
+      timeoutSec: 15
+      unhealthyThreshold: 3
+      healthyThreshold: 2
+      httpPort: 80
+      requestPath: /wp-admin/install.php
+
+#####################
+# Backend Service
+#####################
+
+  - name: backend-service-aqeel
+    type: templates/backend-service.jinja
+    properties:
+      backendServiceName: backend-service-aqeel
+      instanceGroupName: mig-aqeel
+      healthCheckName: health-check-aqeel
+      portName: http
+      maxUtilization: 0.8
+      timeoutSec: 30
+      connectionDrainingTimeout: 300
+
+#########################
+# Load Blanacer
+########################
+
+  - name: load-balancer-aqeel
+    type: templates/load-balancer.jinja
+    properties:
+      urlMapName: http-url-map-aqeel
+      backendServiceName: backend-service-aqeel
+      httpTargetProxyName: http-target-proxy-aqeel
+      globalForwardingRuleName: aqeel-lb
+      portRange: "80"
+
+########################
+# Service Account
+#######################
+
+  - name: wordpress-sa
+    type: templates/service-account.jinja
+    properties:
+      accountId: wordpress-service-sa
+      displayName: "WordPress Service Account"
+      projectId: eurus-project-dev
+      bindingName: wordpress-binding
+      role: roles/cloudsql.client
+
+
+######################
+# Firewalls
+#####################
+
+  - name: firewalls
+    type: templates/firewall.jinja
+    properties:
+      vpcName: vpc
+      firewallRules:
+        - name: allow-ssh
+          sourceRanges: ["0.0.0.0/0"]
+          allowed:
+            - protocol: tcp
+              ports: ["22"]
+        - name: allow-http
+          sourceRanges: ["0.0.0.0/0"]
+          allowed:
+            - protocol: tcp
+              ports: ["80"]
+        - name: allow-mysql
+          sourceRanges: ["0.0.0.0/0"]
+          allowed:
+            - protocol: tcp
+              ports: ["3306"]
+
+
+#######################
+# Cloud sql
+######################
+
+  - name: cloudsql-aqeel
+    type: templates/cloudsql.jinja
+    properties:
+      cloudsqlInstanceName: cloudsql-aqeel
+      region: us-south1
+      tier: db-f1-micro
+      databaseVersion: MYSQL_8_0
+      vpcName: vpc
+      rootPassword: aqeel123
+      cloudsqlDbName: cloudsql-aqeel-dbname
+      dbname: wordpress

@@ -1,0 +1,15 @@
+
+{% set deployment_name = env['deployment'] %}
+resources:
+{% for rule in properties["firewallRules"] %}
+  - name: {{ deployment_name }}-{{ rule["name"] }}
+    type: compute.v1.firewall
+    properties:
+      network: $(ref.{{ deployment_name }}-{{ properties["vpcName"] }}-aq.selfLink)
+      allowed:
+      {% for allow in rule["allowed"] %}
+        - IPProtocol: {{ allow["protocol"] }}
+          ports: {{ allow["ports"] }}
+      {% endfor %}
+      sourceRanges: {{ rule["sourceRanges"] }}
+{% endfor %}

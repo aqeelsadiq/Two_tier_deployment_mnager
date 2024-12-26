@@ -1,0 +1,24 @@
+
+{% set deployment_name = env['deployment'] %}
+resources:
+  - name: {{ deployment_name }}-{{ properties["backendServiceName"] }}
+    type: compute.v1.backendService
+    properties:
+      loadBalancingScheme: EXTERNAL_MANAGED
+      protocol: HTTP
+      portName: {{ properties["portName"] }}
+      backends:
+        - group: $(ref.{{ deployment_name }}-{{ properties["instanceGroupName"] }}.instanceGroup)
+          balancingMode: UTILIZATION
+          maxUtilization: {{ properties["maxUtilization"] }}
+      healthChecks:
+        - $(ref.{{ deployment_name }}-{{ properties["healthCheckName"] }}.selfLink)
+      timeoutSec: {{ properties["timeoutSec"] }}
+      connectionDraining:
+        drainingTimeoutSec: {{ properties["connectionDrainingTimeout"] }}
+    metadata:
+      dependsOn:
+        - {{ deployment_name }}-{{ properties["instanceGroupName"] }}
+        - {{ deployment_name }}-{{ properties["healthCheckName"] }}
+
+        

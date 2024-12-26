@@ -1,0 +1,16 @@
+{% set deployment_name = env['deployment'] %}
+resources:
+  - name: "{{ deployment_name }}-{{ properties['name'] }}-aq"
+    type: compute.v1.network
+    properties:
+      autoCreateSubnetworks: false
+
+{% for subnet in properties["subnets"] %}
+  - name: "{{ deployment_name }}-{{ subnet['name'] }}"
+    type: compute.v1.subnetwork
+    properties:
+      network: $(ref.{{ deployment_name }}-{{ properties['name'] }}-aq.selfLink)
+      ipCidrRange: {{ subnet["ipCidrRange"] }}
+      region: {{ subnet["region"] }}
+{% endfor %}
+

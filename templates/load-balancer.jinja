@@ -1,0 +1,28 @@
+
+{% set deployment_name = env['deployment'] %}
+resources:
+  - name: {{ deployment_name }}-{{ properties["urlMapName"] }}
+    type: compute.v1.urlMap
+    properties:
+      defaultService: $(ref.{{ deployment_name }}-{{ properties["backendServiceName"] }}.selfLink)
+    metadata:
+      dependsOn:
+        - {{ deployment_name }}-{{ properties["backendServiceName"] }}
+
+  - name: {{ deployment_name }}-{{ properties["httpTargetProxyName"] }}
+    type: compute.v1.targetHttpProxy
+    properties:
+      urlMap: $(ref.{{ deployment_name }}-{{ properties["urlMapName"] }}.selfLink)
+    metadata:
+      dependsOn:
+        - {{ deployment_name }}-{{ properties["urlMapName"] }}
+
+  - name: {{ deployment_name }}-{{ properties["globalForwardingRuleName"] }}
+    type: compute.v1.globalForwardingRule
+    properties:
+      loadBalancingScheme: EXTERNAL_MANAGED
+      portRange: "{{ properties["portRange"] }}"
+      target: $(ref.{{ deployment_name }}-{{ properties["httpTargetProxyName"] }}.selfLink)
+    metadata:
+      dependsOn:
+        - {{ deployment_name }}-{{ properties["httpTargetProxyName"] }}
